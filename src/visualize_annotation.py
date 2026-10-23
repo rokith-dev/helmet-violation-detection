@@ -7,8 +7,7 @@ DATASET_DIR = Path(r"D:\HelmetProject\HelmetDetectionDataset")
 IMAGES_DIR = DATASET_DIR / "images"
 ANNOTATIONS_DIR = DATASET_DIR / "annotations"
 
-# Change this filename later to inspect other images.
-XML_FILENAME = "BikesHelmets103.xml"
+XML_FILENAME = "BikesHelmets140.xml"
 
 
 def main():
@@ -23,60 +22,55 @@ def main():
     width, height = image.size
 
     print(f"Image: {filename}")
-    print(f"Image dimensions: {width} x {height}")
+    print(f"Image size: {width} x {height}")
 
-    for obj in root.findall("object"):
+    for index, obj in enumerate(root.findall("object"), start=1):
         label = obj.findtext("name", default="Unknown")
         box = obj.find("bndbox")
 
         if box is None:
+            print(f"Object {index}: no bounding box")
             continue
 
-        xmin = float(box.findtext("xmin"))
-        ymin = float(box.findtext("ymin"))
-        xmax = float(box.findtext("xmax"))
-        ymax = float(box.findtext("ymax"))
+        try:
+            xmin = float(box.findtext("xmin"))
+            ymin = float(box.findtext("ymin"))
+            xmax = float(box.findtext("xmax"))
+            ymax = float(box.findtext("ymax"))
+        except (TypeError, ValueError):
+            print(f"Object {index}: invalid coordinate values")
+            continue
 
-        # Use scaled coordinates only when the originals are invalid
-        # and the scaled coordinates form a valid box in this image.
-        original_valid = (
+        valid = (
             0 <= xmin < xmax <= width
             and 0 <= ymin < ymax <= height
         )
 
-        if not original_valid:
-            scaled = (xmin / 1000, ymin / 1000,
-                      xmax / 1000, ymax / 1000)
+        color = "green" if valid else "red"
 
-            sx1, sy1, sx2, sy2 = scaled
-            scaled_valid = (
-                0 <= sx1 < sx2 <= width
-                and 0 <= sy1 < sy2 <= height
+        print(
+            f"Object {index}: {label} | "
+            f"({xmin}, {ymin}, {xmax}, {ymax}) | "
+            f"{'VALID' if valid else 'INVALID'}"
+        )
+
+        if valid:
+            draw.rectangle(
+                (xmin, ymin, xmax, ymax),
+                outline=color,
+                width=3
             )
-
-            if not scaled_valid:
-                print(f"Skipping invalid box for: {label}")
-                continue
-
-            xmin, ymin, xmax, ymax = scaled
-            print(f"{label}: displaying coordinates divided by 1000")
+            draw.text(
+                (xmin, max(0, ymin - 18)),
+                label,
+                fill="yellow",
+                stroke_width=1,
+                stroke_fill="black"
+            )
         else:
-            print(f"{label}: displaying original coordinates")
+            print("  Not drawn because the coordinates are outside the image.")
 
-        draw.rectangle(
-            (xmin, ymin, xmax, ymax),
-            outline="red",
-            width=3
-        )
-        draw.text(
-            (xmin, max(0, ymin - 18)),
-            label,
-            fill="yellow",
-            stroke_width=1,
-            stroke_fill="black"
-        )
-
-    print("Original image and XML were not modified.")
+    print("Original dataset files were not modified.")
     image.show()
 
 
