@@ -1,0 +1,54 @@
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Allow example configuration
+!.env.example
+
+# Raw dataset
+data/raw/*
+!data/raw/.gitkeep
+
+# Processed dataset
+data/processed/*
+!data/processed/.gitkeep
+
+# Trained models
+models/*
+!models/.gitkeep
+*.keras
+*.h5
+*.weights.h5
+
+# Generated figures
+outputs/figures/*
+!outputs/figures/.gitkeep
+
+# Generated metrics
+outputs/metrics/*
+!outputs/metrics/.gitkeep
+
+# Training history
+outputs/training_history/*
+!outputs/training_history/.gitkeep
+
+# Jupyter temporary files
+.ipynb_checkpoints/
+
+# Generated videos
+*.mp4
+*.avi
+*.mov
+
+# Local VS Code settings
+.vscode/
