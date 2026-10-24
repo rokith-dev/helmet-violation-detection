@@ -1,54 +1,71 @@
 
-# Python cache files
+# ==========================================
+# Python cache and virtual environments
+# ==========================================
 __pycache__/
 *.py[cod]
-
-# Virtual environments
+.pytest_cache/
+.ipynb_checkpoints/
 .venv/
 venv/
 env/
 
-# Environment variables and secrets
+# ==========================================
+# Secrets and environment variables
+# ==========================================
 .env
 .env.*
-
-# Allow example configuration
 !.env.example
 
-# Raw dataset
+# ==========================================
+# Raw and external datasets
+# ==========================================
 data/raw/*
 !data/raw/.gitkeep
+data/external/
 
-# Processed dataset
+# Processed datasets: ignore generated data
 data/processed/*
 !data/processed/.gitkeep
 
+# ==========================================
 # Trained models
+# ==========================================
+# Ignore model files by default; selected checkpoints
+# can be force-added only after checking their size.
 models/*
 !models/.gitkeep
+*.pt
 *.keras
 *.h5
 *.weights.h5
 
-# Generated figures
+# ==========================================
+# Generated output and training runs
+# ==========================================
+outputs/predictions/
+outputs/edgevision_label_preview/
+outputs/hard_examples_contact_sheet.jpg
 outputs/figures/*
 !outputs/figures/.gitkeep
-
-# Generated metrics
 outputs/metrics/*
 !outputs/metrics/.gitkeep
-
-# Training history
 outputs/training_history/*
 !outputs/training_history/.gitkeep
+outputs/yolo_training/
+runs/
 
-# Jupyter temporary files
-.ipynb_checkpoints/
-
+# ==========================================
 # Generated videos
+# ==========================================
 *.mp4
 *.avi
 *.mov
+*.mkv
 
-# Local VS Code settings
+# ==========================================
+# IDE and operating system files
+# ==========================================
 .vscode/
+.DS_Store
+Thumbs.db

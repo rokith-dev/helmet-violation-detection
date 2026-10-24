@@ -1,10 +1,9 @@
-
 from pathlib import Path
 import tempfile
 
 import cv2
-import streamlit as st
 import pandas as pd
+import streamlit as st
 from ultralytics import YOLO
 
 
@@ -14,7 +13,21 @@ from ultralytics import YOLO
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
+# New EdgeVision-trained model.
+# This matches the actual Ultralytics output path from the training run.
 MODEL_PATH = (
+    PROJECT_DIR
+    / "runs"
+    / "detect"
+    / "outputs"
+    / "yolo_training"
+    / "helmet_yolo11n_edgevision_fast"
+    / "weights"
+    / "best.pt"
+)
+
+# Keep the original model as a backup; this app uses MODEL_PATH above.
+BACKUP_MODEL_PATH = (
     PROJECT_DIR
     / "outputs"
     / "yolo_training"
@@ -30,6 +43,7 @@ CLASS_NAMES = {
     0: "With Helmet",
     1: "Without Helmet",
 }
+
 
 # =====================================================
 # STREAMLIT PAGE
@@ -82,7 +96,7 @@ st.info(
 # =====================================================
 
 @st.cache_resource
-def load_model(model_path):
+def load_model(model_path: str):
     return YOLO(str(model_path))
 
 
@@ -94,10 +108,11 @@ def draw_detections(frame, result):
     annotated = frame.copy()
     frame_height, frame_width = annotated.shape[:2]
 
+    if result.boxes is None:
+        return annotated
+
     for detection in result.boxes:
-        x1, y1, x2, y2 = map(
-            int, detection.xyxy[0].tolist()
-        )
+        x1, y1, x2, y2 = map(int, detection.xyxy[0].tolist())
 
         x1 = max(0, min(x1, frame_width - 1))
         x2 = max(0, min(x2, frame_width - 1))
@@ -107,64 +122,31 @@ def draw_detections(frame, result):
         class_id = int(detection.cls[0].item())
         confidence = float(detection.conf[0].item())
 
-        class_name = CLASS_NAMES.get(
-            class_id, f"Class {class_id}"
-        )
+        class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
         label = f"{class_name} {confidence:.0%}"
 
-        # Green = With Helmet; Red = Without Helmet
-        color = (
-            (40, 180, 40)
-            if class_id == 0
-            else (40, 40, 230)
-        )
+        # OpenCV uses BGR: green for With Helmet, red for Without Helmet.
+        color = (40, 180, 40) if class_id == 0 else (40, 40, 230)
 
-        # Bounding box
-        cv2.rectangle(
-            annotated,
-            (x1, y1),
-            (x2, y2),
-            color,
-            2,
-        )
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
 
-        # Larger labels for better readability
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 1.0
         thickness = 2
         padding = 8
 
         (text_width, text_height), baseline = cv2.getTextSize(
-            label,
-            font,
-            font_scale,
-            thickness,
+            label, font, font_scale, thickness
         )
 
         label_width = text_width + padding * 2
-        label_height = (
-            text_height + baseline + padding * 2
-        )
+        label_height = text_height + baseline + padding * 2
 
-        # Keep label inside frame
-        label_x = min(
-            x1,
-            max(0, frame_width - label_width),
-        )
+        label_x = min(x1, max(0, frame_width - label_width))
+        label_y = y1 - label_height if y1 >= label_height else y1
 
-        if y1 >= label_height:
-            label_y = y1 - label_height
-        else:
-            label_y = y1
-
-        label_right = min(
-            frame_width - 1,
-            label_x + label_width,
-        )
-        label_bottom = min(
-            frame_height - 1,
-            label_y + label_height,
-        )
+        label_right = min(frame_width - 1, label_x + label_width)
+        label_bottom = min(frame_height - 1, label_y + label_height)
 
         cv2.rectangle(
             annotated,
@@ -237,7 +219,7 @@ def process_video(
     frames_read = 0
     frames_processed = 0
 
-    # Counts detections across analyzed frames, not unique riders.
+    # These are detections across analyzed frames, not unique riders.
     with_helmet = 0
     without_helmet = 0
     confidence_values = []
@@ -245,19 +227,16 @@ def process_video(
     progress = st.progress(0, text="Starting detection...")
     status = st.empty()
     preview = st.empty()
-
     last_annotated = None
 
     try:
         while True:
             success, frame = cap.read()
-
             if not success:
                 break
 
             frames_read += 1
 
-            # Run inference on selected frames.
             if (frames_read - 1) % frame_stride == 0:
                 result = model.predict(
                     source=frame,
@@ -268,29 +247,29 @@ def process_video(
 
                 annotated = draw_detections(frame, result)
 
-                for detection in result.boxes:
-                    class_id = int(detection.cls[0].item())
-                    score = float(detection.conf[0].item())
+                if result.boxes is not None:
+                    for detection in result.boxes:
+                        class_id = int(detection.cls[0].item())
+                        score = float(detection.conf[0].item())
 
-                    if class_id == 0:
-                        with_helmet += 1
-                    elif class_id == 1:
-                        without_helmet += 1
+                        if class_id == 0:
+                            with_helmet += 1
+                        elif class_id == 1:
+                            without_helmet += 1
 
-                    confidence_values.append(score)
+                        confidence_values.append(score)
 
                 last_annotated = annotated
                 frames_processed += 1
 
             else:
-                # Preserve the latest annotated frame between
-                # inference frames.
+                # Reuse the most recent annotated frame between inference
+                # frames when frame_stride is greater than one.
                 if last_annotated is not None:
                     annotated = last_annotated.copy()
                 else:
                     annotated = frame.copy()
 
-            # Add frame counter
             cv2.putText(
                 annotated,
                 f"Frame: {frames_read}/{total_frames}",
@@ -304,7 +283,6 @@ def process_video(
 
             writer.write(annotated)
 
-            # Update preview periodically
             if (
                 frames_read == 1
                 or frames_read % max(1, int(fps)) == 0
@@ -313,20 +291,14 @@ def process_video(
                 preview.image(
                     cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
                     channels="RGB",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
             if total_frames > 0:
-                fraction = min(
-                    frames_read / total_frames,
-                    1.0,
-                )
+                fraction = min(frames_read / total_frames, 1.0)
                 progress.progress(
                     fraction,
-                    text=(
-                        f"Analyzing frame "
-                        f"{frames_read}/{total_frames}"
-                    ),
+                    text=f"Analyzing frame {frames_read}/{total_frames}",
                 )
 
             status.caption(
@@ -340,10 +312,7 @@ def process_video(
 
     progress.progress(1.0, text="Detection completed.")
 
-    if (
-        not output_path.is_file()
-        or output_path.stat().st_size == 0
-    ):
+    if not output_path.is_file() or output_path.stat().st_size == 0:
         raise RuntimeError("Output video was not created.")
 
     return {
@@ -353,7 +322,8 @@ def process_video(
         "without_helmet": without_helmet,
         "mean_confidence": (
             sum(confidence_values) / len(confidence_values)
-            if confidence_values else 0.0
+            if confidence_values
+            else 0.0
         ),
         "fps": fps,
         "width": width,
@@ -368,7 +338,6 @@ def process_video(
 with st.sidebar:
     st.header("⚙️ Detection Settings")
 
-    # Lower threshold can reveal detections but may add false positives.
     confidence = st.slider(
         "Confidence threshold",
         min_value=0.10,
@@ -398,17 +367,30 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("Model: Custom YOLO11n")
+    st.caption("Model: EdgeVision-trained YOLO11n")
     st.caption("Classes: With Helmet / Without Helmet")
+    st.caption(f"Input size: {image_size}px")
+
+    with st.expander("Model details"):
+        st.code(str(MODEL_PATH), language="text")
+        st.write("Original model backup:")
+        st.code(str(BACKUP_MODEL_PATH), language="text")
+        st.write(
+            "Backup checkpoint exists:",
+            BACKUP_MODEL_PATH.is_file(),
+        )
 
 
 # =====================================================
-# CHECK MODEL
+# CHECK AND LOAD MODEL
 # =====================================================
 
 if not MODEL_PATH.is_file():
     st.error(
-        f"Trained model not found:\n\n`{MODEL_PATH}`"
+        "The EdgeVision-trained model was not found at:\n\n"
+        f"`{MODEL_PATH}`\n\n"
+        "Check that the training run created `weights/best.pt` "
+        "at this location."
     )
     st.stop()
 
@@ -435,9 +417,7 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is None:
-    st.info(
-        "Upload a video, then click Start Helmet Detection."
-    )
+    st.info("Upload a video, then click Start Helmet Detection.")
 
     col1, col2, col3 = st.columns(3)
     col1.markdown("### 1. Upload\nChoose a recorded video.")
@@ -456,13 +436,10 @@ st.video(uploaded_file)
 if st.button(
     "🚀 Start Helmet Detection",
     type="primary",
-    use_container_width=True,
+    width="stretch",
 ):
     suffix = Path(uploaded_file.name).suffix.lower() or ".mp4"
-
-    output_path = (
-        OUTPUT_DIR / "dashboard_helmet_detection.mp4"
-    )
+    output_path = OUTPUT_DIR / "dashboard_helmet_detection.mp4"
 
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -511,38 +488,24 @@ if saved_output and stats:
 
         col1, col2, col3, col4 = st.columns(4)
 
-        col1.metric(
-            "With Helmet",
-            f"{stats['with_helmet']:,}",
-        )
-        col2.metric(
-            "Without Helmet",
-            f"{stats['without_helmet']:,}",
-        )
-        col3.metric(
-            "Frames Read",
-            f"{stats['frames_read']:,}",
-        )
-        col4.metric(
-            "Frames Analyzed",
-            f"{stats['frames_processed']:,}",
-        )
+        col1.metric("With Helmet", f"{stats['with_helmet']:,}")
+        col2.metric("Without Helmet", f"{stats['without_helmet']:,}")
+        col3.metric("Frames Read", f"{stats['frames_read']:,}")
+        col4.metric("Frames Analyzed", f"{stats['frames_processed']:,}")
 
         st.subheader("📈 Detection Distribution")
 
-        chart_data = pd.DataFrame({
-            "Class": ["With Helmet", "Without Helmet"],
-            "Detections": [
-                stats["with_helmet"],
-                stats["without_helmet"],
-            ],
-        })
-
-        st.bar_chart(
-            chart_data,
-            x="Class",
-            y="Detections",
+        chart_data = pd.DataFrame(
+            {
+                "Class": ["With Helmet", "Without Helmet"],
+                "Detections": [
+                    stats["with_helmet"],
+                    stats["without_helmet"],
+                ],
+            }
         )
+
+        st.bar_chart(chart_data, x="Class", y="Detections")
 
         st.subheader("🎬 Annotated Output Video")
         st.video(str(output_path))
@@ -562,7 +525,7 @@ if saved_output and stats:
                     "helmet_detection.mp4",
                 ),
                 mime="video/mp4",
-                use_container_width=True,
+                width="stretch",
             )
 
         st.warning(
