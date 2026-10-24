@@ -26,12 +26,19 @@ IMAGE_SIZE = (224, 224)
 PERSON_CLASS = 0
 TARGET_CLASSES = [0, 3]
 
-# This threshold is only a starting point for testing.
+# Process one frame out of every three.
+FRAME_SKIP = 3
+
+# Smaller inference size can improve CPU speed.
+YOLO_IMAGE_SIZE = 480
+
+# Experimental threshold only.
 HELMET_THRESHOLD = 0.5
 
 
 def resize_frame(frame):
     height, width = frame.shape[:2]
+
     scale = min(
         MAX_WIDTH / width,
         MAX_HEIGHT / height,
@@ -76,7 +83,7 @@ def open_video(source):
 
 
 def classify_person_crop(classifier, crop):
-    """Classify a person crop using the trained VGG16 model."""
+    """Classify a full-person crop; this is experimental."""
 
     if crop.size == 0:
         return "Unknown", 0.0
@@ -87,35 +94,67 @@ def classify_person_crop(classifier, crop):
     image = preprocess_input(image)
     image = np.expand_dims(image, axis=0)
 
-    probability_without_helmet = float(
+    probability_without = float(
         classifier.predict(image, verbose=0)[0][0]
     )
 
-    if probability_without_helmet >= HELMET_THRESHOLD:
-        label = "Possible No Helmet"
-        score = probability_without_helmet
-    else:
-        label = "Possible With Helmet"
-        score = 1.0 - probability_without_helmet
+    if probability_without >= HELMET_THRESHOLD:
+        return "Possible No Helmet", probability_without
 
-    return label, score
+    return "Possible With Helmet", 1.0 - probability_without
+
+
+def draw_label(frame, text, x, y, color):
+    """Draw readable text on a solid background."""
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.58
+    thickness = 2
+
+    (text_width, text_height), baseline = cv2.getTextSize(
+        text, font, scale, thickness
+    )
+
+    y = max(y, text_height + baseline + 6)
+
+    cv2.rectangle(
+        frame,
+        (x, y - text_height - baseline - 6),
+        (x + text_width + 8, y + 4),
+        color,
+        -1,
+    )
+
+    cv2.putText(
+        frame,
+        text,
+        (x + 4, y - 2),
+        font,
+        scale,
+        (255, 255, 255),
+        thickness,
+        cv2.LINE_AA,
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Detect people and test VGG16 helmet classification."
+        description="Experimental helmet classification on traffic video."
     )
+
     parser.add_argument(
         "--source",
         default="0",
-        help="Webcam index or video file path.",
+        help="Webcam index or traffic video path.",
     )
+
     parser.add_argument(
         "--confidence",
         type=float,
         default=0.35,
-        help="YOLO detection confidence threshold.",
+        help="YOLO confidence threshold.",
     )
+
     args = parser.parse_args()
 
     if not 0.0 <= args.confidence <= 1.0:
@@ -123,95 +162,134 @@ def main():
 
     if not VGG16_MODEL.is_file():
         raise FileNotFoundError(
-            f"Trained VGG16 model not found: {VGG16_MODEL}"
+            f"VGG16 model not found: {VGG16_MODEL}"
         )
 
-    print("Loading YOLO model...")
+    print("Loading YOLO...")
     detector = YOLO(YOLO_MODEL)
 
-    print("Loading trained VGG16 classifier...")
+    print("Loading VGG16...")
     classifier = tf.keras.models.load_model(VGG16_MODEL)
 
     capture = open_video(args.source)
 
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0:
+        fps = 25.0
+
+    # We skip frames for faster CPU inference, so the display
+    # delay is reduced proportionally.
+    display_delay = max(1, int(1000 / fps / FRAME_SKIP))
+
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, MAX_WIDTH, MAX_HEIGHT)
 
-    print("Video opened. Press Q or Esc to quit.")
-    print("VGG16 predictions on full person crops are experimental.")
+    print("Video opened.")
+    print(f"Detection runs every {FRAME_SKIP} frames.")
+    print("Orange boxes = people; blue boxes = motorcycles.")
+    print("Helmet labels are experimental, not confirmed violations.")
+    print("Press Q or Esc to quit.")
+
+    frame_count = 0
+    processed_count = 0
+    annotated_frame = None
 
     try:
         while True:
             success, frame = capture.read()
+
             if not success:
-                print("Video ended or frame could not be read.")
+                print("Video ended or a frame could not be read.")
                 break
 
-            results = detector.predict(
-                source=frame,
-                classes=TARGET_CLASSES,
-                conf=args.confidence,
-                verbose=False,
-            )
+            frame_count += 1
 
-            annotated = frame.copy()
-            boxes = results[0].boxes
+            # Skip expensive inference on intermediate frames.
+            if (frame_count - 1) % FRAME_SKIP == 0:
+                results = detector.predict(
+                    source=frame,
+                    classes=TARGET_CLASSES,
+                    conf=args.confidence,
+                    imgsz=YOLO_IMAGE_SIZE,
+                    verbose=False,
+                )
 
-            if boxes is not None:
-                for box in boxes:
-                    class_id = int(box.cls[0].item())
+                annotated_frame = frame.copy()
+                boxes = results[0].boxes
 
-                    # Only classify person detections.
-                    if class_id != PERSON_CLASS:
-                        continue
+                if boxes is not None:
+                    for box in boxes:
+                        class_id = int(box.cls[0].item())
 
-                    x1, y1, x2, y2 = map(
-                        int, box.xyxy[0].tolist()
-                    )
+                        x1, y1, x2, y2 = map(
+                            int, box.xyxy[0].tolist()
+                        )
 
-                    height, width = frame.shape[:2]
-                    x1 = max(0, min(x1, width - 1))
-                    x2 = max(0, min(x2, width))
-                    y1 = max(0, min(y1, height - 1))
-                    y2 = max(0, min(y2, height))
+                        height, width = frame.shape[:2]
+                        x1 = max(0, min(x1, width - 1))
+                        x2 = max(0, min(x2, width))
+                        y1 = max(0, min(y1, height - 1))
+                        y2 = max(0, min(y2, height))
 
-                    crop = frame[y1:y2, x1:x2]
-                    label, score = classify_person_crop(
-                        classifier, crop
-                    )
+                        if class_id == PERSON_CLASS:
+                            crop = frame[y1:y2, x1:x2]
 
-                    # Orange indicates an experimental prediction.
-                    cv2.rectangle(
-                        annotated,
-                        (x1, y1),
-                        (x2, y2),
-                        (0, 165, 255),
-                        2,
-                    )
+                            label, score = classify_person_crop(
+                                classifier, crop
+                            )
 
-                    text = f"{label}: {score:.0%}"
-                    text_y = max(y1 - 10, 25)
+                            color = (0, 165, 255)
+                            text = f"TEST ONLY: {label} {score:.0%}"
 
-                    cv2.putText(
-                        annotated,
-                        text,
-                        (x1, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 165, 255),
-                        2,
-                        cv2.LINE_AA,
-                    )
+                        else:
+                            color = (255, 120, 0)
+                            text = "Motorcycle"
 
-            cv2.imshow(WINDOW_NAME, resize_frame(annotated))
+                        cv2.rectangle(
+                            annotated_frame,
+                            (x1, y1),
+                            (x2, y2),
+                            color,
+                            2,
+                        )
 
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or key == 27:
+                        draw_label(
+                            annotated_frame,
+                            text,
+                            x1,
+                            y1 - 8,
+                            color,
+                        )
+
+                draw_label(
+                    annotated_frame,
+                    "EXPERIMENTAL - NOT VERIFIED",
+                    12,
+                    28,
+                    (0, 0, 180),
+                )
+
+                processed_count += 1
+
+            # Keep displaying the latest processed frame.
+            if annotated_frame is not None:
+                cv2.imshow(
+                    WINDOW_NAME,
+                    resize_frame(annotated_frame),
+                )
+
+            key = cv2.waitKey(display_delay) & 0xFF
+
+            if key in (ord("q"), 27):
+                print("Stopped by user.")
                 break
 
     finally:
         capture.release()
         cv2.destroyAllWindows()
+
+        print("Frames read:", frame_count)
+        print("Frames analyzed:", processed_count)
         print("Video resources released.")
 
 
